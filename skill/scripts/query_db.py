@@ -20,8 +20,21 @@ DB_DIR = Path.home() / "journal-finder" / "data"
 
 
 def load_database(discipline):
-    """Load journal database for specified discipline(s)."""
+    """Load journal database for specified discipline(s).
+
+    Supports: 'all' (unified SSCI), 'economics', 'demography', 'both' (econ+demo legacy).
+    """
     journals = []
+
+    # Try unified SSCI database first for 'all'
+    if discipline == "all":
+        path = DB_DIR / "journals_ssci.json"
+        if path.exists():
+            with open(path, "r", encoding="utf-8") as f:
+                journals = json.load(f)
+            return journals
+        # Fallback to loading all available files
+        discipline = "both"
 
     if discipline in ("economics", "both"):
         path = DB_DIR / "journals_economics.json"
@@ -34,7 +47,6 @@ def load_database(discipline):
         if path.exists():
             with open(path, "r", encoding="utf-8") as f:
                 data = json.load(f)
-                # Avoid duplicates when loading both
                 existing_issns = {j["issn_l"] for j in journals}
                 for j in data:
                     if j["issn_l"] not in existing_issns:
@@ -203,8 +215,8 @@ def format_output(journals, top_n=15):
 def main():
     parser = argparse.ArgumentParser(description="Query journal database")
     parser.add_argument(
-        "--discipline", choices=["economics", "demography", "both"],
-        default="both", help="Which discipline database to search"
+        "--discipline", choices=["economics", "demography", "both", "all"],
+        default="all", help="Which discipline database to search (all = full SSCI/AHCI)"
     )
     parser.add_argument(
         "--keywords", type=str, default="",

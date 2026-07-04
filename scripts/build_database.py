@@ -192,11 +192,33 @@ def is_relevant_demography(journal_source):
 def main():
     print("Loading data sources...")
 
-    # Load raw sources
-    sources_econ = load_json(RAW_DIR / "sources_economics.json")
-    sources_demo = load_json(RAW_DIR / "sources_demography.json")
-    print(f"  Economics sources: {len(sources_econ)}")
-    print(f"  Demography sources: {len(sources_demo)}")
+    # Load raw sources - support both old (per-discipline) and new (unified SSCI) format
+    sources_all = []
+    seen_issn_l = set()
+
+    # New unified SSCI source (preferred)
+    ssci_all = load_json(RAW_DIR / "sources_ssci_all.json")
+    if ssci_all:
+        print(f"  SSCI unified sources: {len(ssci_all)}")
+        for s in ssci_all:
+            if s.get("issn_l") and s["issn_l"] not in seen_issn_l:
+                seen_issn_l.add(s["issn_l"])
+                sources_all.append(s)
+
+    # Legacy per-discipline sources (fallback / supplement)
+    for filename in ["sources_economics.json", "sources_demography.json"]:
+        legacy = load_json(RAW_DIR / filename)
+        if legacy:
+            added = 0
+            for s in legacy:
+                if s.get("issn_l") and s["issn_l"] not in seen_issn_l:
+                    seen_issn_l.add(s["issn_l"])
+                    sources_all.append(s)
+                    added += 1
+            if added:
+                print(f"  Legacy {filename}: +{added} new")
+
+    print(f"  Total unique sources: {len(sources_all)}")
 
     # Load computed metrics
     metrics_raw = load_json(RAW_DIR / "computed_metrics.json")
@@ -214,53 +236,45 @@ def main():
         manual = {}
     print(f"  Manual supplement entries: {len(manual)}")
 
-    # Filter and merge Economics journals
-    print("\nBuilding Economics database...")
-    econ_filtered = [s for s in sources_econ if is_relevant_economics(s)]
-    print(f"  After relevance filter: {len(econ_filtered)} (from {len(sources_econ)})")
-
-    econ_journals = []
-    for source in econ_filtered:
+    # Build unified database
+    print("\nBuilding unified SSCI database...")
+    all_journals = []
+    for source in sources_all:
         journal = merge_journal(source, metrics_idx, review_idx, manual)
         if journal:
-            econ_journals.append(journal)
+            all_journals.append(journal)
 
     # Sort by citedness (proxy for prestige)
-    econ_journals.sort(key=lambda j: j.get("citedness_2yr") or 0, reverse=True)
+    all_journals.sort(key=lambda j: j.get("citedness_2yr") or 0, reverse=True)
 
+    # Save unified database
+    unified_output = DATA_DIR / "journals_ssci.json"
+    with open(unified_output, "w", encoding="utf-8") as f:
+        json.dump(all_journals, f, ensure_ascii=False, indent=2)
+    print(f"  Saved {len(all_journals)} journals to {unified_output}")
+
+    # Also maintain backward-compatible per-discipline files
+    print("\nBuilding per-discipline databases (backward compat)...")
+
+    econ_journals = [j for j in all_journals if is_relevant_economics(
+        next((s for s in sources_all if s.get("issn_l") == j["issn_l"]), {})
+    )]
     econ_output = DATA_DIR / "journals_economics.json"
     with open(econ_output, "w", encoding="utf-8") as f:
         json.dump(econ_journals, f, ensure_ascii=False, indent=2)
-    print(f"  Saved {len(econ_journals)} journals to {econ_output}")
+    print(f"  Economics: {len(econ_journals)} journals")
 
-    # Filter and merge Demography journals
-    print("\nBuilding Demography database...")
-    demo_filtered = [s for s in sources_demo if is_relevant_demography(s)]
-    print(f"  After relevance filter: {len(demo_filtered)} (from {len(sources_demo)})")
-
-    demo_journals = []
-    seen_issn = set()  # Avoid duplicates with economics
-    for source in demo_filtered:
-        issn_l = source.get("issn_l")
-        if issn_l in seen_issn:
-            continue
-        seen_issn.add(issn_l)
-        journal = merge_journal(source, metrics_idx, review_idx, manual)
-        if journal:
-            demo_journals.append(journal)
-
-    demo_journals.sort(key=lambda j: j.get("citedness_2yr") or 0, reverse=True)
-
+    demo_journals = [j for j in all_journals if is_relevant_demography(
+        next((s for s in sources_all if s.get("issn_l") == j["issn_l"]), {})
+    )]
     demo_output = DATA_DIR / "journals_demography.json"
     with open(demo_output, "w", encoding="utf-8") as f:
         json.dump(demo_journals, f, ensure_ascii=False, indent=2)
-    print(f"  Saved {len(demo_journals)} journals to {demo_output}")
+    print(f"  Demography: {len(demo_journals)} journals")
 
     # Summary and quality check
     print("\n--- Quality Check ---")
 
-    # Check known journals
-    all_journals = econ_journals + demo_journals
     all_issns = {j["issn_l"] for j in all_journals}
 
     known_must_have = {
@@ -285,6 +299,24 @@ def main():
     print(f"  With metrics data: {has_metrics} ({has_metrics/total*100:.1f}%)")
     print(f"  With review time data: {has_review} ({has_review/total*100:.1f}%)")
     print(f"  With manual supplement: {has_manual} ({has_manual/total*100:.1f}%)")
+
+    # Subject distribution
+    from collections import Counter
+    subjects = Counter()
+    for j in all_journals:
+        # Use JCR subject from supplement if available
+        supp = manual.get(j["issn_l"], {})
+        subj = supp.get("subject_category") or supp.get("subject_detail", "")
+        if subj:
+            # Extract primary subject
+            primary = subj.split("(")[0].strip() if "(" in subj else subj
+            subjects[primary] += 1
+        else:
+            subjects["(no subject)"] += 1
+
+    print(f"\n  Subject distribution (top 15):")
+    for subj, count in subjects.most_common(15):
+        print(f"    {subj}: {count}")
 
 
 if __name__ == "__main__":

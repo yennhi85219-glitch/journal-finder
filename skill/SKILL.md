@@ -1,13 +1,13 @@
 ---
 name: find-journal
-description: This skill should be used when the user asks to "find a journal", "recommend journals", "where should I submit", "journal suggestions", "帮我找期刊", "期刊推荐", "投稿建议", or mentions submitting a research paper in Economics, Finance, Demography, or Population Studies.
+description: This skill should be used when the user asks to "find a journal", "recommend journals", "where should I submit", "journal suggestions", "帮我找期刊", "期刊推荐", "投稿建议", or mentions submitting a research paper in any social science or humanities field (Economics, Sociology, Political Science, Psychology, Education, Law, Communication, Geography, Management, Demography, Anthropology, Linguistics, etc).
 argument-hint: [paste title and abstract, or describe your paper topic]
 allowed-tools: [Read, Bash, Grep, Glob]
 ---
 
-# Journal Finder for Economics & Demography
+# Journal Finder for Social Sciences & Humanities
 
-Help researchers find suitable academic journals for submission by matching their paper's topic against a curated database of journals in Economics and Demography/Population Studies.
+Help researchers find suitable academic journals for submission by matching their paper's topic against a curated database of SSCI/AHCI journals covering all social science and humanities disciplines.
 
 ## Workflow
 
