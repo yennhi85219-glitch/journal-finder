@@ -9,6 +9,7 @@ fetch_ssci_journals.py - 基于 JCR SSCI/AHCI 期刊名单，从 OpenAlex 拉取
 """
 
 import json
+import os
 import time
 import requests
 import openpyxl
@@ -16,7 +17,15 @@ from pathlib import Path
 from tqdm import tqdm
 
 BASE_URL = "https://api.openalex.org"
-MAILTO = "test@example.com"
+MAILTO = "alexishuang1901@gmail.com"
+
+# Load API key from .env file or environment variable
+_env_file = Path(__file__).parent.parent / ".env"
+if _env_file.exists():
+    for line in _env_file.read_text().splitlines():
+        if line.startswith("OPENALEX_KEY="):
+            os.environ.setdefault("OPENALEX_KEY", line.split("=", 1)[1].strip())
+API_KEY = os.environ.get("OPENALEX_KEY", "")
 
 JCR_FILE = Path.home() / "Downloads/期刊/2026年度JCR期刊名单（完整版）.xlsx"
 OUTPUT_DIR = Path(__file__).parent.parent / "data" / "raw"
@@ -25,9 +34,15 @@ OUTPUT_FILE = OUTPUT_DIR / "sources_ssci_all.json"
 
 def create_session():
     session = requests.Session()
-    session.headers.update({
+    headers = {
         "User-Agent": f"JournalFinder/1.0 (mailto:{MAILTO})",
-    })
+    }
+    if API_KEY:
+        headers["Authorization"] = f"Bearer {API_KEY}"
+        print(f"  Using API key: {API_KEY[:8]}...")
+    else:
+        print("  No API key found, using polite pool only")
+    session.headers.update(headers)
     return session
 
 

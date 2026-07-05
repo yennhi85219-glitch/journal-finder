@@ -8,3 +8,6 @@ __pycache__/
 
 # Raw API data (too large, regenerable by running scripts)
 data/raw/
+
+# API keys
+.env
