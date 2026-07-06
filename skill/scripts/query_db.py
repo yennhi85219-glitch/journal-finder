@@ -5,6 +5,10 @@ query_db.py - 期刊数据库查询脚本
 从本地 JSON 数据库中筛选和排序期刊，返回 top N 候选。
 供 Claude Code Skill 通过 Bash 调用。
 
+匹配策略：
+  - 关键词匹配（权重 0.4）+ 语义向量搜索（权重 0.6）混合排序
+  - 若 FAISS 索引不存在，自动降级为纯关键词匹配
+
 Usage:
     python3 query_db.py --discipline economics --keywords "labor,wage,employment"
     python3 query_db.py --discipline both --keywords "aging,pension,labor market" --sort speed
@@ -13,6 +17,7 @@ Usage:
 
 import argparse
 import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -212,6 +217,123 @@ def format_output(journals, top_n=15):
     return results
 
 
+def run_semantic_search(query_text, top_k, filter_quartile=None, max_apc=None):
+    """
+    调用 semantic_search.py 获取语义搜索结果。
+
+    返回 {issn_l: _semantic_score} 字典。
+    若索引不存在或调用失败，返回空字典（自动降级为纯关键词模式）。
+    """
+    faiss_index = DATA_DIR / "journal_index.faiss"
+    if not faiss_index.exists():
+        return {}
+
+    script_path = Path(__file__).parent / "semantic_search.py"
+    cmd = [
+        sys.executable, str(script_path),
+        "--query", query_text,
+        "--top", str(top_k),
+    ]
+    if filter_quartile:
+        cmd += ["--filter-quartile", filter_quartile]
+    if max_apc is not None:
+        cmd += ["--max-apc", str(max_apc)]
+
+    try:
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        if result.returncode != 0:
+            return {}
+        data = json.loads(result.stdout)
+        return {r["issn_l"]: r["_semantic_score"] for r in data.get("results", [])}
+    except Exception:
+        return {}
+
+
+def merge_results(keyword_journals, semantic_scores, top_n):
+    """
+    合并关键词匹配结果和语义搜索结果。
+
+    策略：
+      - 关键词分数归一化到 [0, 1]，权重 0.4
+      - 语义分数已在 [0, 1]（余弦相似度），权重 0.6
+      - 对两个来源的 issn_l 取并集，按综合分排序
+      - 返回 top_n 条结果
+    """
+    # 归一化关键词分数
+    kw_scores = {j["issn_l"]: j.get("_keyword_score", 0) for j in keyword_journals}
+    max_kw = max(kw_scores.values(), default=1) or 1
+    kw_normalized = {issn: s / max_kw for issn, s in kw_scores.items()}
+
+    # 收集所有候选期刊的 issn_l（两个来源的并集）
+    all_issns = set(kw_normalized.keys()) | set(semantic_scores.keys())
+
+    # 构建综合分数字典
+    combined = {}
+    for issn in all_issns:
+        kw = kw_normalized.get(issn, 0.0)
+        sem = semantic_scores.get(issn, 0.0)
+
+        if semantic_scores:
+            # 两个来源都有数据时，加权合并
+            combined[issn] = kw * 0.4 + sem * 0.6
+        else:
+            # 语义搜索不可用时，降级为纯关键词分
+            combined[issn] = kw
+
+    # 按综合分降序排列
+    sorted_issns = sorted(combined.items(), key=lambda x: -x[1])[:top_n]
+
+    # 重建期刊记录列表（优先从关键词结果取，补充 _semantic_score）
+    journal_map = {j["issn_l"]: j for j in keyword_journals}
+    results = []
+    for issn, score in sorted_issns:
+        if issn in journal_map:
+            j = journal_map[issn].copy()
+        else:
+            # 仅语义搜索命中、关键词未命中的期刊：从数据库加载基础信息
+            journals_all = load_database("all")
+            j_match = next((x for x in journals_all if x["issn_l"] == issn), None)
+            if not j_match:
+                continue
+            j = {
+                "name": j_match["name"],
+                "abbreviation": j_match.get("abbreviation"),
+                "issn_l": issn,
+                "publisher": j_match.get("publisher"),
+                "jcr_quartile": j_match.get("jcr_quartile"),
+                "cas_zone": j_match.get("cas_zone"),
+                "impact_factor": j_match.get("impact_factor"),
+                "citedness_2yr": j_match.get("citedness_2yr"),
+                "is_oa": j_match.get("is_oa"),
+                "oa_type": j_match.get("oa_type"),
+                "apc_usd": j_match.get("apc_usd"),
+                "apc_waiver": j_match.get("apc_waiver"),
+                "cn_author_ratio": j_match.get("cn_author_ratio"),
+                "annual_volume_2024": j_match.get("annual_volume_2024"),
+                "review_median_days": j_match.get("review_median_days"),
+                "accept_to_online_days": j_match.get("accept_to_online_days"),
+                "review_coverage": j_match.get("review_coverage"),
+                "word_limit_max": j_match.get("word_limit_max"),
+                "review_type": j_match.get("review_type"),
+                "warning_tags": j_match.get("warning_tags", []),
+                "notes": j_match.get("notes", ""),
+                "topics": [t.get("name", t) if isinstance(t, dict) else t
+                           for t in j_match.get("topics", [])[:5]],
+                "_keyword_score": 0.0,
+            }
+
+        j["_semantic_score"] = round(semantic_scores.get(issn, 0.0), 4)
+        j["_combined_score"] = round(score, 4)
+        results.append(j)
+
+    return results
+
+
 def main():
     parser = argparse.ArgumentParser(description="Query journal database")
     parser.add_argument(
@@ -248,26 +370,43 @@ def main():
     args = parser.parse_args()
     keywords = [k.strip() for k in args.keywords.split(",") if k.strip()]
 
-    # Load and process
+    # --- 关键词匹配部分 ---
     journals = load_database(args.discipline)
     if not journals:
         print(json.dumps({"error": "No journals found. Run build_database.py first."}))
         sys.exit(1)
 
-    # Filter
     journals = apply_filters(journals, args)
+    # 扩大候选池再交给合并逻辑，避免语义命中的期刊被提前截断
+    candidate_pool = max(args.top * 5, 100)
+    kw_journals = sort_journals(journals, args.sort, keywords)
+    kw_results_raw = format_output(kw_journals, candidate_pool)
 
-    # Sort
-    journals = sort_journals(journals, args.sort, keywords)
+    # --- 语义搜索部分 ---
+    query_text = " ".join(keywords) if keywords else ""
+    semantic_scores = {}
+    if query_text:
+        semantic_scores = run_semantic_search(
+            query_text,
+            top_k=candidate_pool,
+            filter_quartile=args.min_quartile,
+            max_apc=args.max_apc,
+        )
 
-    # Output
-    results = format_output(journals, args.top)
+    # --- 合并 ---
+    if semantic_scores:
+        # 有语义结果：加权合并
+        results = merge_results(kw_results_raw, semantic_scores, top_n=args.top)
+    else:
+        # 无语义结果（索引未建或无关键词）：纯关键词
+        results = format_output(kw_journals, args.top)
 
     output = {
         "query": {
             "discipline": args.discipline,
             "keywords": keywords,
             "sort": args.sort,
+            "semantic_search": bool(semantic_scores),
             "filters": {
                 "oa_only": args.oa_only,
                 "max_apc": args.max_apc,
