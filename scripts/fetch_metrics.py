@@ -11,15 +11,26 @@ fetch_metrics.py - 计算每个期刊的国人占比和年发文量
 import json
 import time
 import requests
+import os
 from pathlib import Path
 from tqdm import tqdm
 
 BASE_URL = "https://api.openalex.org"
-MAILTO = "test@example.com"
 
 DATA_DIR = Path(__file__).parent.parent / "data"
 RAW_DIR = DATA_DIR / "raw"
 OUTPUT_FILE = RAW_DIR / "computed_metrics.json"
+
+# Load API key from .env (polite pool + higher rate limit)
+_env_file = Path(__file__).parent.parent / ".env"
+if _env_file.exists():
+    for line in _env_file.read_text().splitlines():
+        if line.startswith("OPENALEX_KEY="):
+            os.environ.setdefault("OPENALEX_KEY", line.split("=", 1)[1].strip())
+        elif line.startswith("OPENALEX_MAILTO="):
+            os.environ.setdefault("OPENALEX_MAILTO", line.split("=", 1)[1].strip())
+API_KEY = os.environ.get("OPENALEX_KEY", "")
+MAILTO = os.environ.get("OPENALEX_MAILTO", "")
 
 # Years to compute metrics for
 YEARS = [2023, 2024, 2025]
@@ -27,9 +38,11 @@ YEARS = [2023, 2024, 2025]
 
 def create_session():
     session = requests.Session()
-    session.headers.update({
-        "User-Agent": f"JournalFinder/1.0 (mailto:{MAILTO})",
-    })
+    contact = f" (mailto:{MAILTO})" if MAILTO else ""
+    headers = {"User-Agent": f"JournalFinder/1.0{contact}"}
+    if API_KEY:
+        headers["Authorization"] = f"Bearer {API_KEY}"
+    session.headers.update(headers)
     return session
 
 
@@ -61,7 +74,8 @@ def get_works_count(session, source_id, year, country_code=None):
         filters.append(f"authorships.institutions.country_code:{country_code}")
 
     filter_str = ",".join(filters)
-    url = f"{BASE_URL}/works?filter={filter_str}&per_page=1&mailto={MAILTO}"
+    mailto_param = f"&mailto={MAILTO}" if MAILTO else ""
+    url = f"{BASE_URL}/works?filter={filter_str}&per_page=1{mailto_param}"
     data = safe_get(session, url)
     if data:
         return data.get("meta", {}).get("count", 0)
@@ -108,9 +122,9 @@ def compute_metrics_for_journal(session, journal):
 
 
 def load_journals():
-    """Load raw journal lists."""
+    """Load raw journal lists (unified SSCI source first, then legacy per-discipline)."""
     journals = []
-    for filename in ["sources_economics.json", "sources_demography.json"]:
+    for filename in ["sources_ssci_all.json", "sources_economics.json", "sources_demography.json"]:
         filepath = RAW_DIR / filename
         if filepath.exists():
             with open(filepath, "r", encoding="utf-8") as f:
@@ -121,16 +135,28 @@ def load_journals():
     seen = set()
     unique = []
     for j in journals:
-        if j["issn_l"] and j["issn_l"] not in seen:
+        if j.get("issn_l") and j["issn_l"] not in seen:
             seen.add(j["issn_l"])
             unique.append(j)
     return unique
 
 
 def main():
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--scope",
+        help="仅处理指定 _source_scope 的期刊（如 scie_env_health），不传则处理全部",
+    )
+    args = parser.parse_args()
+
     session = create_session()
     journals = load_journals()
     print(f"Loaded {len(journals)} unique journals to process")
+
+    if args.scope:
+        journals = [j for j in journals if j.get("_source_scope") == args.scope]
+        print(f"  Filtered to scope='{args.scope}': {len(journals)} journals")
 
     # Load existing results for resumability
     existing_metrics = {}

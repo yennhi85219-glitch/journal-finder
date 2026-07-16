@@ -2,22 +2,34 @@
 build_database.py - 合并所有数据源生成最终期刊数据库
 
 合并：
-1. data/raw/sources_economics.json, sources_demography.json (OpenAlex 基础数据)
+1. data/raw/sources_ssci_all.json (canonical OpenAlex 基础数据)
+   可用 --include-legacy 显式补充旧 economics/demography topic 库
 2. data/raw/computed_metrics.json (国人占比 + 年发文量)
 3. data/raw/review_times.json (审稿时间线)
 4. data/manual_supplement.json (JCR分区、中科院分区、APC等手动维护数据)
 
 输出：
+- data/journals_ssci.json
 - data/journals_economics.json
 - data/journals_demography.json
 """
 
+import argparse
 import json
+import os
 from datetime import date
 from pathlib import Path
 
 DATA_DIR = Path(__file__).parent.parent / "data"
 RAW_DIR = DATA_DIR / "raw"
+VALID_JCR_QUARTILES = {"Q1", "Q2", "Q3", "Q4"}
+VALID_CANONICAL_SOURCE_SCOPES = {"ssci_ahci", "scie_env_health"}
+REVIEW_TYPE_PROVENANCE_FIELDS = {
+    "review_type_source",
+    "review_type_source_url",
+    "review_type_last_checked",
+    "review_type_verified",
+}
 
 
 def load_json(path):
@@ -27,6 +39,171 @@ def load_json(path):
         return []
     with open(path, "r", encoding="utf-8") as f:
         return json.load(f)
+
+
+def write_json_atomic(path, data):
+    """Write JSON beside its destination, then atomically replace the output."""
+    tmp_path = path.with_name(f".{path.name}.tmp")
+    try:
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
+        tmp_path.replace(path)
+    finally:
+        if tmp_path.exists():
+            tmp_path.unlink()
+
+
+def normalize_jcr_quartile(value):
+    """Normalize missing JCR sentinels without inventing a quartile."""
+    if value is None:
+        return None
+    normalized = str(value).strip().upper()
+    if normalized in {"", "N/A", "NA", "-", "—"}:
+        return None
+    return normalized
+
+
+def verified_review_type(manual):
+    """Return review type only when the supplement records its provenance."""
+    value = manual.get("review_type")
+    if not value:
+        return None
+    if not any(manual.get(field) for field in REVIEW_TYPE_PROVENANCE_FIELDS):
+        return None
+    normalized = str(value).strip().lower().replace("-", "_").replace(" ", "_")
+    if normalized not in {"single_blind", "double_blind"}:
+        return None
+    return normalized
+
+
+def _tag_source(source, source_file, source_scope=None, force_scope=False):
+    """Copy a raw source and attach explicit provenance for the final database."""
+    tagged = dict(source)
+    if force_scope:
+        tagged["_source_scope"] = source_scope
+    else:
+        existing_scope = tagged.get("_source_scope")
+        if existing_scope not in VALID_CANONICAL_SOURCE_SCOPES:
+            raise ValueError(
+                f"{source_file}: journal {tagged.get('issn_l') or tagged.get('name')!r} "
+                f"has missing or invalid _source_scope {existing_scope!r}"
+            )
+    tagged["_source_file"] = source_file
+    return tagged
+
+
+def load_sources(include_legacy=False):
+    """Load canonical unified sources, optionally adding explicitly tagged legacy data."""
+    sources = []
+    seen_issn_l = set()
+    unified_path = RAW_DIR / "sources_ssci_all.json"
+
+    if unified_path.exists():
+        unified = load_json(unified_path)
+        if not isinstance(unified, list):
+            raise ValueError(f"{unified_path} must contain a JSON list")
+        print(f"  SSCI unified sources: {len(unified)}")
+        duplicate_issns = []
+        missing_issn_count = 0
+        for source in unified:
+            issn_l = source.get("issn_l")
+            if not issn_l:
+                missing_issn_count += 1
+                continue
+            if issn_l in seen_issn_l:
+                duplicate_issns.append(issn_l)
+                continue
+            seen_issn_l.add(issn_l)
+            sources.append(
+                _tag_source(
+                    source,
+                    source_file=unified_path.name,
+                )
+            )
+        if duplicate_issns:
+            print(
+                f"  WARNING: skipped {len(duplicate_issns)} duplicate unified ISSN-L "
+                f"records: {', '.join(duplicate_issns[:5])}"
+            )
+        if missing_issn_count:
+            print(
+                f"  WARNING: skipped {missing_issn_count} unified records "
+                "without ISSN-L"
+            )
+    elif not include_legacy:
+        raise FileNotFoundError(
+            f"Canonical source file not found: {unified_path}. "
+            "Run fetch_ssci_journals.py first, or pass --include-legacy "
+            "explicitly for a diagnostic legacy-only build."
+        )
+    else:
+        print("  WARNING: canonical source missing; building explicitly tagged legacy data only")
+
+    if include_legacy:
+        legacy_files = [
+            ("sources_economics.json", "legacy_economics"),
+            ("sources_demography.json", "legacy_demography"),
+        ]
+        for filename, source_scope in legacy_files:
+            path = RAW_DIR / filename
+            if not path.exists():
+                continue
+            legacy = load_json(path)
+            if not isinstance(legacy, list):
+                raise ValueError(f"{path} must contain a JSON list")
+            added = 0
+            for source in legacy:
+                issn_l = source.get("issn_l")
+                if not issn_l or issn_l in seen_issn_l:
+                    continue
+                seen_issn_l.add(issn_l)
+                sources.append(
+                    _tag_source(
+                        source,
+                        source_file=filename,
+                        source_scope=source_scope,
+                        force_scope=True,
+                    )
+                )
+                added += 1
+            print(f"  Legacy {filename}: +{added} explicitly tagged")
+
+    return sources
+
+
+def validate_journals(journals, label):
+    """Fail before publishing malformed or duplicate journal records."""
+    if not journals:
+        raise ValueError(f"{label}: refusing to write an empty journal database")
+
+    seen = set()
+    errors = []
+    for index, journal in enumerate(journals):
+        issn_l = journal.get("issn_l")
+        name = journal.get("name")
+        source_scope = (journal.get("_meta") or {}).get("source_scope")
+        quartile = journal.get("jcr_quartile")
+
+        if not issn_l:
+            errors.append(f"row {index}: missing issn_l")
+        elif issn_l in seen:
+            errors.append(f"row {index}: duplicate issn_l {issn_l}")
+        else:
+            seen.add(issn_l)
+        if not name:
+            errors.append(f"row {index}: missing name")
+        if not source_scope:
+            errors.append(f"row {index}: missing _meta.source_scope")
+        if quartile is not None and quartile not in VALID_JCR_QUARTILES:
+            errors.append(f"row {index}: invalid jcr_quartile {quartile!r}")
+
+        if len(errors) >= 10:
+            break
+
+    if errors:
+        raise ValueError(f"{label} validation failed: " + "; ".join(errors))
 
 
 def build_metrics_index(metrics_list):
@@ -74,14 +251,16 @@ def merge_journal(source, metrics_idx, review_idx, manual_supplement):
 
     # Extract scope keywords from topics
     topics = source.get("topics", [])
-    scope_keywords = list({
-        t["name"].lower() for t in topics[:10]
+    scope_keywords = sorted({
+        t["name"].strip().lower()
+        for t in topics[:10]
+        if isinstance(t, dict) and t.get("name")
     })
 
     journal = {
         # Identity
         "issn_l": issn_l,
-        "name": source["name"],
+        "name": source.get("name"),
         "abbreviation": get_abbreviation(source),
         "publisher": source.get("publisher"),
         "country_code": source.get("country_code"),
@@ -92,11 +271,12 @@ def merge_journal(source, metrics_idx, review_idx, manual_supplement):
         "topics": [
             {"name": t["name"], "score": t.get("count", 0), "subfield": t.get("subfield", "")}
             for t in topics[:15]
+            if isinstance(t, dict) and t.get("name")
         ],
         "scope_keywords": scope_keywords,
 
         # Impact metrics
-        "jcr_quartile": manual.get("jcr_quartile"),
+        "jcr_quartile": normalize_jcr_quartile(manual.get("jcr_quartile")),
         "cas_zone": manual.get("cas_zone"),
         "impact_factor": manual.get("impact_factor"),
         "citedness_2yr": source.get("citedness_2yr", 0),
@@ -113,16 +293,24 @@ def merge_journal(source, metrics_idx, review_idx, manual_supplement):
         "annual_volume_2024": metrics.get("annual_volume_2024"),
         "annual_volume_2023": metrics.get("annual_volume_2023"),
 
-        # Review timeline
-        "review_median_days": review.get("review_median_days"),
+        # Review timeline — Crossref (per-article evidence) is primary;
+        # manual publisher-page numbers are a fallback for journals Crossref doesn't cover (e.g. Elsevier).
+        "review_median_days": review.get("review_median_days")
+        if review.get("review_median_days") is not None
+        else manual.get("review_median_days"),
         "review_samples": review.get("samples_with_review", 0),
         "review_coverage": review.get("review_coverage", 0),
-        "accept_to_online_days": review.get("accept_to_online_days"),
+        "accept_to_online_days": review.get("accept_to_online_days")
+        if review.get("accept_to_online_days") is not None
+        else manual.get("accept_to_online_days"),
+        "review_source": "crossref"
+        if review.get("review_median_days") is not None
+        else ("publisher_page" if manual.get("review_median_days") is not None else None),
 
         # Submission requirements
         "word_limit_min": manual.get("word_limit_min"),
         "word_limit_max": manual.get("word_limit_max"),
-        "review_type": manual.get("review_type"),
+        "review_type": verified_review_type(manual),
 
         # Warnings and notes
         "warning_tags": manual.get("warning_tags", []),
@@ -133,6 +321,8 @@ def merge_journal(source, metrics_idx, review_idx, manual_supplement):
             "last_api_update": date.today().isoformat(),
             "last_manual_update": manual.get("last_verified"),
             "has_manual_data": bool(manual),
+            "source_scope": source.get("_source_scope"),
+            "source_file": source.get("_source_file"),
         },
     }
 
@@ -190,34 +380,19 @@ def is_relevant_demography(journal_source):
 
 
 def main():
+    parser = argparse.ArgumentParser(description="Build merged journal databases")
+    parser.add_argument(
+        "--include-legacy",
+        action="store_true",
+        help=(
+            "Add journals missing from sources_ssci_all.json using legacy economics/"
+            "demography sources. Added records are explicitly tagged as legacy."
+        ),
+    )
+    args = parser.parse_args()
+
     print("Loading data sources...")
-
-    # Load raw sources - support both old (per-discipline) and new (unified SSCI) format
-    sources_all = []
-    seen_issn_l = set()
-
-    # New unified SSCI source (preferred)
-    ssci_all = load_json(RAW_DIR / "sources_ssci_all.json")
-    if ssci_all:
-        print(f"  SSCI unified sources: {len(ssci_all)}")
-        for s in ssci_all:
-            if s.get("issn_l") and s["issn_l"] not in seen_issn_l:
-                seen_issn_l.add(s["issn_l"])
-                sources_all.append(s)
-
-    # Legacy per-discipline sources (fallback / supplement)
-    for filename in ["sources_economics.json", "sources_demography.json"]:
-        legacy = load_json(RAW_DIR / filename)
-        if legacy:
-            added = 0
-            for s in legacy:
-                if s.get("issn_l") and s["issn_l"] not in seen_issn_l:
-                    seen_issn_l.add(s["issn_l"])
-                    sources_all.append(s)
-                    added += 1
-            if added:
-                print(f"  Legacy {filename}: +{added} new")
-
+    sources_all = load_sources(include_legacy=args.include_legacy)
     print(f"  Total unique sources: {len(sources_all)}")
 
     # Load computed metrics
@@ -246,30 +421,31 @@ def main():
 
     # Sort by citedness (proxy for prestige)
     all_journals.sort(key=lambda j: j.get("citedness_2yr") or 0, reverse=True)
-
-    # Save unified database
-    unified_output = DATA_DIR / "journals_ssci.json"
-    with open(unified_output, "w", encoding="utf-8") as f:
-        json.dump(all_journals, f, ensure_ascii=False, indent=2)
-    print(f"  Saved {len(all_journals)} journals to {unified_output}")
+    validate_journals(all_journals, "journals_ssci")
 
     # Also maintain backward-compatible per-discipline files
     print("\nBuilding per-discipline databases (backward compat)...")
+    source_by_issn = {source["issn_l"]: source for source in sources_all}
 
     econ_journals = [j for j in all_journals if is_relevant_economics(
-        next((s for s in sources_all if s.get("issn_l") == j["issn_l"]), {})
+        source_by_issn.get(j["issn_l"], {})
     )]
-    econ_output = DATA_DIR / "journals_economics.json"
-    with open(econ_output, "w", encoding="utf-8") as f:
-        json.dump(econ_journals, f, ensure_ascii=False, indent=2)
-    print(f"  Economics: {len(econ_journals)} journals")
+    validate_journals(econ_journals, "journals_economics")
 
     demo_journals = [j for j in all_journals if is_relevant_demography(
-        next((s for s in sources_all if s.get("issn_l") == j["issn_l"]), {})
+        source_by_issn.get(j["issn_l"], {})
     )]
+    validate_journals(demo_journals, "journals_demography")
+
+    # Validate every output before replacing any existing database.
+    unified_output = DATA_DIR / "journals_ssci.json"
+    econ_output = DATA_DIR / "journals_economics.json"
     demo_output = DATA_DIR / "journals_demography.json"
-    with open(demo_output, "w", encoding="utf-8") as f:
-        json.dump(demo_journals, f, ensure_ascii=False, indent=2)
+    write_json_atomic(unified_output, all_journals)
+    print(f"  Saved {len(all_journals)} journals to {unified_output}")
+    write_json_atomic(econ_output, econ_journals)
+    print(f"  Economics: {len(econ_journals)} journals")
+    write_json_atomic(demo_output, demo_journals)
     print(f"  Demography: {len(demo_journals)} journals")
 
     # Summary and quality check

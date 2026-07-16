@@ -2,9 +2,13 @@
 
 ## 数据文件位置
 
-- `~/journal-finder/data/journals_economics.json` — 经济学期刊
-- `~/journal-finder/data/journals_demography.json` — 人口学期刊
-- `~/journal-finder/data/manual_supplement.json` — 手动维护数据（JCR/中科院分区等）
+数据库目录由 `--data-dir`、`JOURNAL_FINDER_DATA_DIR`、安装配置或仓库相对路径解析。
+
+- `journals_ssci.json` — canonical 主数据库
+- `journals_economics.json` — 经济学兼容子集
+- `journals_demography.json` — 人口学兼容子集
+- `manual_supplement.json` — 手动维护数据（JCR/中科院分区等）
+- `journal_index_meta.json` — FAISS/index-map generation 校验和
 
 ## 单条记录 Schema
 
@@ -27,7 +31,7 @@
   ],
   "scope_keywords": ["string — 范围关键词（小写）"],
 
-  "jcr_quartile": "string|null — Q1/Q2/Q3/Q4 (手动维护)",
+  "jcr_quartile": "string|null — 仅 Q1/Q2/Q3/Q4；N/A 规范为 null",
   "cas_zone": "number|null — 中科院分区 1-4 (手动维护)",
   "impact_factor": "number|null — 最新影响因子 (手动维护)",
   "citedness_2yr": "number — OpenAlex 2年平均被引 (IF近似值)",
@@ -49,7 +53,7 @@
 
   "word_limit_min": "number|null — 最低字数",
   "word_limit_max": "number|null — 最高字数",
-  "review_type": "string|null — single_blind/double_blind",
+  "review_type": "string|null — single_blind/double_blind；仅有来源证据时写入",
 
   "warning_tags": ["string — 避坑标签，如'压稿严重','国人占比高','审稿快'"],
   "notes": "string — 备注",
@@ -57,7 +61,9 @@
   "_meta": {
     "last_api_update": "string — 最近API数据更新日期",
     "last_manual_update": "string|null — 最近手动更新日期",
-    "has_manual_data": "boolean — 是否有手动补充数据"
+    "has_manual_data": "boolean — 是否有手动补充数据",
+    "source_scope": "ssci_ahci|scie_env_health — canonical 收录来源",
+    "source_file": "string — 构建该记录的 raw 数据文件"
   }
 }
 ```
@@ -76,8 +82,19 @@
 ### 缺失数据约定
 
 - `null` 表示数据未获取到或不适用
+- 不用默认值填充未知审稿形式、分区或费用
 - 在推荐表格中显示为 "—"
 - `review_coverage < 0.3` 时，`review_median_days` 可信度低，应提醒用户
+
+### 查询结果质量字段
+
+- `quality.status` — `ok` / `limited_matches` / `no_good_match`
+- `query.semantic_status` — `enabled` / `fallback` / `disabled_no_query`
+- `query.semantic_error` — 语义搜索降级的具体原因；成功时为 `null`
+- `_fit_scores.topic_fit` — 通过主题准入门槛后的综合主题分
+- `_semantic_score` — SPECTER2 原始余弦分
+- `_semantic_fit_score` — 校准后用于融合的语义相关度
+- `_core_keyword_score` — 排除地区、方法、样本人群上下文后的核心概念覆盖度
 
 ### 预留扩展字段（Phase 2）
 

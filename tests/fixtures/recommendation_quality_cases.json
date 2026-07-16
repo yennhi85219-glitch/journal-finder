@@ -1,0 +1,197 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "E1",
+      "description": "Minimum wage and youth employment",
+      "keywords": [
+        "minimum wage",
+        "youth employment",
+        "difference in differences",
+        "China",
+        "labor economics"
+      ],
+      "positive_issns": [
+        "0927-5371",
+        "0734-306X",
+        "0019-7939",
+        "0022-166X",
+        "1945-7782"
+      ],
+      "forbidden_top10": ["0895-3309", "0022-0515"],
+      "min_positive_top5": 2,
+      "min_positive_top10": 2,
+      "require_positive_top1": true
+    },
+    {
+      "id": "E2",
+      "description": "Cash transfers and poverty in Sub-Saharan Africa",
+      "keywords": [
+        "cash transfers",
+        "poverty",
+        "randomized controlled trial",
+        "Sub-Saharan Africa",
+        "development economics"
+      ],
+      "positive_issns": [
+        "0304-3878",
+        "0013-0079",
+        "0305-750X",
+        "0022-0388",
+        "0954-1748"
+      ],
+      "forbidden_top10": ["1756-137X"],
+      "min_positive_top5": 3,
+      "min_positive_top10": 3,
+      "require_positive_top1": true
+    },
+    {
+      "id": "D1",
+      "description": "Low fertility and family policy in East Asia",
+      "keywords": [
+        "low fertility",
+        "pronatalist policy",
+        "East Asia",
+        "family policy",
+        "demography"
+      ],
+      "positive_issns": [
+        "0070-3370",
+        "0098-7921",
+        "0032-4728",
+        "0168-6577",
+        "1435-9871",
+        "0039-3665"
+      ],
+      "forbidden_top10": ["1941-1383", "1756-2570"],
+      "min_positive_top5": 3,
+      "min_positive_top10": 3,
+      "require_positive_top1": true
+    },
+    {
+      "id": "D2",
+      "description": "Refugee labor-market integration in Europe",
+      "keywords": [
+        "refugee migration",
+        "labor market integration",
+        "Europe",
+        "immigrant employment",
+        "social integration"
+      ],
+      "positive_issns": [
+        "0197-9183",
+        "1369-183X",
+        "2049-5838",
+        "1544-8444",
+        "2214-594X",
+        "0020-7985"
+      ],
+      "forbidden_top5": ["1388-364X", "1038-4111"],
+      "min_positive_top5": 3,
+      "min_positive_top10": 3
+    },
+    {
+      "id": "H1",
+      "description": "Extreme heat and mortality among older adults",
+      "keywords": [
+        "extreme heat",
+        "temperature mortality",
+        "older adults",
+        "urban climate",
+        "environmental epidemiology"
+      ],
+      "positive_issns": [
+        "0160-4120",
+        "0013-9351",
+        "2542-5196",
+        "2471-1403",
+        "0091-6765",
+        "1044-3983",
+        "2212-0955"
+      ],
+      "forbidden_top10": [
+        "1471-2318",
+        "2561-7605",
+        "1613-9372",
+        "1566-4910"
+      ],
+      "min_positive_top5": 1,
+      "min_positive_top10": 2,
+      "require_positive_top1": true
+    },
+    {
+      "id": "H2",
+      "description": "Prenatal air pollution and child cognition",
+      "keywords": [
+        "prenatal air pollution",
+        "child cognitive development",
+        "birth cohort",
+        "PM2.5",
+        "environmental epidemiology"
+      ],
+      "positive_issns": [
+        "1559-0631",
+        "0160-4120",
+        "0013-9351",
+        "1476-069X",
+        "0300-5771",
+        "0091-6765",
+        "2474-7882",
+        "1044-3983"
+      ],
+      "forbidden_top10": ["2196-5412", "0269-7491"],
+      "min_positive_top5": 1,
+      "min_positive_top10": 4,
+      "require_positive_top1": true
+    },
+    {
+      "id": "S1",
+      "description": "Social-media misinformation and political polarization",
+      "keywords": [
+        "social media misinformation",
+        "political polarization",
+        "online news",
+        "experiment",
+        "political communication"
+      ],
+      "positive_issns": [
+        "1058-4609",
+        "1461-4448",
+        "0021-9916",
+        "1369-118X",
+        "2056-3051",
+        "1040-1620",
+        "0190-9320",
+        "0093-6502"
+      ],
+      "min_positive_top5": 1,
+      "min_positive_top10": 2,
+      "require_positive_top1": true
+    },
+    {
+      "id": "X1",
+      "description": "Population aging, pension reform, and labor supply",
+      "keywords": [
+        "population aging",
+        "pension reform",
+        "labor supply",
+        "retirement",
+        "OECD panel data"
+      ],
+      "positive_issns": [
+        "0022-166X",
+        "0734-306X",
+        "1474-7472",
+        "2212-828X",
+        "0933-1433",
+        "0047-2727",
+        "0144-686X",
+        "0895-9420"
+      ],
+      "forbidden_top10": ["1471-2318", "2561-7605"],
+      "min_positive_top5": 2,
+      "min_positive_top10": 4,
+      "require_positive_top1": true
+    }
+  ]
+}

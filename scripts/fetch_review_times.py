@@ -10,6 +10,7 @@ fetch_review_times.py - 从 Crossref 提取审稿时间线数据
 """
 
 import json
+import os
 import time
 import requests
 from datetime import date
@@ -19,11 +20,17 @@ from tqdm import tqdm
 
 BASE_URL_OA = "https://api.openalex.org"
 BASE_URL_CR = "https://api.crossref.org"
-MAILTO = "test@example.com"
 
 DATA_DIR = Path(__file__).parent.parent / "data"
 RAW_DIR = DATA_DIR / "raw"
 OUTPUT_FILE = RAW_DIR / "review_times.json"
+
+_env_file = Path(__file__).parent.parent / ".env"
+if _env_file.exists():
+    for line in _env_file.read_text().splitlines():
+        if line.startswith("OPENALEX_MAILTO="):
+            os.environ.setdefault("OPENALEX_MAILTO", line.split("=", 1)[1].strip())
+MAILTO = os.environ.get("OPENALEX_MAILTO", "")
 
 # How many DOIs to sample per journal
 SAMPLE_SIZE = 30
@@ -31,8 +38,9 @@ SAMPLE_SIZE = 30
 
 def create_session():
     session = requests.Session()
+    contact = f" (mailto:{MAILTO})" if MAILTO else ""
     session.headers.update({
-        "User-Agent": f"JournalFinder/1.0 (mailto:{MAILTO})",
+        "User-Agent": f"JournalFinder/1.0{contact}",
     })
     return session
 
@@ -61,11 +69,12 @@ def safe_get(session, url, retries=3, delay=0.1):
 def get_dois_for_journal(session, openalex_id, n=SAMPLE_SIZE):
     """Get recent DOIs for a journal from OpenAlex."""
     source_id = f"https://openalex.org/{openalex_id}"
+    mailto_param = f"&mailto={MAILTO}" if MAILTO else ""
     url = (
         f"{BASE_URL_OA}/works?"
         f"filter=primary_location.source.id:{source_id},"
         f"publication_year:2023|2024|2025,has_doi:true"
-        f"&per_page={n}&sort=publication_date:desc&mailto={MAILTO}"
+        f"&per_page={n}&sort=publication_date:desc{mailto_param}"
     )
     data = safe_get(session, url)
     if not data:
@@ -226,9 +235,9 @@ def compute_review_times(session, journal):
 
 
 def load_journals():
-    """Load raw journal lists, deduplicate by issn_l."""
+    """Load raw journal lists (unified SSCI source first, then legacy), dedup by issn_l."""
     journals = []
-    for filename in ["sources_economics.json", "sources_demography.json"]:
+    for filename in ["sources_ssci_all.json", "sources_economics.json", "sources_demography.json"]:
         filepath = RAW_DIR / filename
         if filepath.exists():
             with open(filepath, "r", encoding="utf-8") as f:
@@ -237,16 +246,28 @@ def load_journals():
     seen = set()
     unique = []
     for j in journals:
-        if j["issn_l"] and j["issn_l"] not in seen:
+        if j.get("issn_l") and j["issn_l"] not in seen:
             seen.add(j["issn_l"])
             unique.append(j)
     return unique
 
 
 def main():
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--scope",
+        help="仅处理指定 _source_scope 的期刊（如 scie_env_health），不传则处理全部",
+    )
+    args = parser.parse_args()
+
     session = create_session()
     journals = load_journals()
     print(f"Loaded {len(journals)} unique journals")
+
+    if args.scope:
+        journals = [j for j in journals if j.get("_source_scope") == args.scope]
+        print(f"  Filtered to scope='{args.scope}': {len(journals)} journals")
 
     # Load existing results for resumability
     existing = {}

@@ -13,6 +13,34 @@ data/raw/
 data/journal_embeddings.npy
 data/journal_index.faiss
 data/journal_index_map.json
+data/journal_index_meta.json
+# Embedding cache (125MB, exceeds GitHub 100MB limit; regenerable, SHA1-keyed)
+data/embeddings_cache.json
 
 # API keys
 .env
+
+# Machine-specific path written by scripts/install_skill.py
+skill/journal-finder-config.json
+
+# Local task handoff and raw pasted supplements
+CODEX_TASK.md
+data/parsed_user_supplements.json
+
+# Node (only package.json/lock are tracked)
+node_modules/
+
+# Excel scratch files and personal work docs (not part of the pipeline)
+*.xlsx
+.~*
+# Machine-generated preview / worklist CSVs
+aims and scope.csv
+
+# Codex harvest staging + intermediate artifacts (regenerable, not source of truth)
+data/codex_worklist.json
+data/codex_harvest.json
+data/codex_cleaned.json
+data/aims_scope_failures.json
+data/unmatched_cas_names.txt
+data/unmatched_jcr_names.txt
+data/unmatched_names.txt
